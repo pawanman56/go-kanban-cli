@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,6 +19,14 @@ const (
 	todo status = iota
 	inProgress
 	done
+)
+
+/* MODEL MANAGEMENT */
+var models []tea.Model
+
+const (
+	model status = iota
+	form
 )
 
 /* STYLING */
@@ -37,6 +47,10 @@ type Task struct {
 	status      status
 	title       string
 	description string
+}
+
+func NewTask(status status, title, description string) Task {
+	return Task{status: status, title: title, description: description}
 }
 
 func (t *Task) Next() {
@@ -155,7 +169,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Next()
 		case "enter":
 			m.MoveToNext()
+		case "n":
+			models[model] = m // Save the state of current model
+			models[form] = NewForm(m.focused)
+			return models[form].Update(nil)
 		}
+	case Task:
+		task := msg
+		return m, m.lists[task.status].InsertItem(len(m.lists[task.status].Items()), task)
 	}
 
 	var cmd tea.Cmd
@@ -203,8 +224,65 @@ func (m Model) View() string {
 	}
 }
 
+/* FORM MODEL */
+type Form struct {
+	focused     status
+	title       textinput.Model
+	description textarea.Model
+}
+
+func NewForm(focused status) *Form {
+	form := &Form{focused: focused}
+	form.title = textinput.New()
+	form.title.Focus()
+	form.description = textarea.New()
+	return form
+}
+
+func (m Form) CreateTask() tea.Msg {
+	task := NewTask(m.focused, m.title.Value(), m.description.Value())
+	return task
+}
+
+func (m Form) Init() tea.Cmd {
+	return nil
+}
+
+func (m Form) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "enter":
+			if m.title.Focused() {
+				m.title.Blur()
+				m.description.Focus()
+				return m, textarea.Blink
+			} else {
+				models[form] = m
+				return models[model], m.CreateTask
+			}
+		}
+	}
+
+	if m.title.Focused() {
+		m.title, cmd = m.title.Update(msg)
+		return m, cmd
+	} else {
+		m.description, cmd = m.description.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m Form) View() string {
+	return lipgloss.JoinVertical(lipgloss.Left, m.title.View(), m.description.View())
+}
+
 func main() {
-	m := New()
+	models = []tea.Model{New(), NewForm(todo)}
+	m := models[model]
 	p := tea.NewProgram(m)
 
 	if err := p.Start(); err != nil {
